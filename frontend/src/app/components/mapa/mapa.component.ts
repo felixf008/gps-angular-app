@@ -34,4 +34,309 @@ export class MapaComponent implements OnInit, OnDestroy {
 
   constructor(private ubicacionService: UbicacionService) { }
 
-  ngOnInit(): void {\n    this.inicializarMapa();\n    this.cargarUbicaciones();\n  }\n\n  ngOnDestroy(): void {\n    if (this.watchId !== null) {\n      navigator.geolocation.clearWatch(this.watchId);\n    }\n  }\n\n  inicializarMapa() {\n    this.mapa = L.map('mapa').setView([19.4326, -99.1332], 13);\n    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {\n      maxZoom: 19,\n      attribution: '© OpenStreetMap'\n    }).addTo(this.mapa);\n  }\n\n  cargarUbicaciones() {\n    this.ubicacionService.obtenerUbicaciones()\n      .then(res => {\n        this.ubicaciones = res.data;\n        if (this.ubicaciones.length === 0 && this.usarDatosEjemplo) {\n          this.ubicaciones = this.ubicacionService.obtenerDatosEjemplo();\n        }\n        this.dibujarUbicaciones();\n      })\n      .catch(err => {\n        console.error('Error al cargar ubicaciones:', err);\n        if (this.usarDatosEjemplo) {\n          this.ubicaciones = this.ubicacionService.obtenerDatosEjemplo();\n          this.dibujarUbicaciones();\n        }\n      });\n  }\n\n  dibujarUbicaciones() {\n    // Limpiar marcadores anteriores (excepto el marcador actual)\n    this.mapa.eachLayer((layer: any) => {\n      if ((layer instanceof L.CircleMarker || layer instanceof L.Marker) && layer !== this.marcadorActual) {\n        this.mapa.removeLayer(layer);\n      }\n    });\n\n    this.ubicaciones.forEach(u => {\n      L.circleMarker([u.latitud, u.longitud], {\n        radius: 8,\n        fillColor: '#3388ff',\n        color: '#000',\n        weight: 2,\n        opacity: 1,\n        fillOpacity: 0.8\n      }).bindPopup(`\n        <b>${u.descripcion || 'Sin descripción'}</b><br>\n        Lat: ${u.latitud.toFixed(4)}<br>\n        Lon: ${u.longitud.toFixed(4)}<br>\n        ${u.fecha ? 'Fecha: ' + new Date(u.fecha).toLocaleString() : ''}\n      `).addTo(this.mapa);\n    });\n  }\n\n  // Iniciar tracking GPS en tiempo real\n  iniciarGPSEnTiempoReal() {\n    if (!navigator.geolocation) {\n      this.mostrarMensaje('Geolocalización no disponible', 'error');\n      return;\n    }\n\n    if (this.gpsActivo) {\n      this.detenerGPSEnTiempoReal();\n      return;\n    }\n\n    this.gpsActivo = true;\n    this.mostrarMensaje('GPS en tiempo real activado', 'info');\n\n    // Usar watchPosition para actualizaciones continuas\n    this.watchId = navigator.geolocation.watchPosition(\n      (position) => {\n        const lat = position.coords.latitude;\n        const lon = position.coords.longitude;\n        this.velocidad = position.coords.speed || 0;\n        this.precision = position.coords.accuracy || 0;\n\n        this.latitud = lat;\n        this.longitud = lon;\n\n        // Actualizar marcador actual\n        if (this.marcadorActual) {\n          this.mapa.removeLayer(this.marcadorActual);\n        }\n\n        this.marcadorActual = L.circleMarker([lat, lon], {\n          radius: 10,\n          fillColor: '#00ff00',\n          color: '#000',\n          weight: 3,\n          opacity: 1,\n          fillOpacity: 0.9\n        }).bindPopup(\n          `<b>Mi ubicación actual</b><br>\n           Lat: ${lat.toFixed(4)}<br>\n           Lon: ${lon.toFixed(4)}<br>\n           Velocidad: ${(this.velocidad ? (this.velocidad * 3.6).toFixed(2) : 0)} km/h<br>\n           Precisión: ${this.precision.toFixed(0)}m`\n        ).addTo(this.mapa);\n\n        // Centrar mapa en ubicación actual\n        this.mapa.setView([lat, lon], 15);\n\n        // Agregar al historial\n        this.historialUbicaciones.push({ lat, lon, fecha: new Date() });\n\n        // Guardar automáticamente cada ubicación\n        this.guardarUbicacionAutomatica(lat, lon);\n      },\n      (error) => {\n        console.error('Error de GPS:', error);\n        this.mostrarMensaje(\n          `Error GPS: ${this.getErrorMessage(error.code)}`,\n          'error'\n        );\n        this.gpsActivo = false;\n      },\n      {\n        enableHighAccuracy: true,\n        timeout: 5000,\n        maximumAge: 0\n      }\n    );\n  }\n\n  // Detener tracking GPS\n  detenerGPSEnTiempoReal() {\n    if (this.watchId !== null) {\n      navigator.geolocation.clearWatch(this.watchId);\n      this.watchId = null;\n    }\n    this.gpsActivo = false;\n    this.mostrarMensaje('GPS en tiempo real detenido', 'info');\n  }\n\n  // Guardar ubicación automáticamente\n  private guardarUbicacionAutomatica(lat: number, lon: number) {\n    // Crear descripción automática basada en la hora\n    const hora = new Date().toLocaleTimeString();\n    const descripcionAuto = this.descripcion || `Ubicación en tiempo real - ${hora}`;\n\n    this.ubicacionService.guardarUbicacion(lat, lon, descripcionAuto)\n      .then(() => {\n        console.log('Ubicación guardada automáticamente');\n        this.cargarUbicaciones();\n      })\n      .catch(err => {\n        console.error('Error al guardar automáticamente:', err);\n      });\n  }\n\n  async guardarUbicacion() {\n    try {\n      this.cargando = true;\n      this.mensaje = '';\n\n      let latitud: number;\n      let longitud: number;\n\n      if (this.mostrarFormularioManual && this.latitud !== null && this.longitud !== null) {\n        latitud = this.latitud;\n        longitud = this.longitud;\n      } else {\n        this.mostrarMensaje('Obteniendo ubicación GPS...', 'info');\n        try {\n          const gps = await this.ubicacionService.obtenerGPSConReintentos(2);\n          latitud = gps.latitud;\n          longitud = gps.longitud;\n        } catch (error: any) {\n          this.mostrarMensaje(\n            `${error.message || error}. Por favor ingresa las coordenadas manualmente.`,\n            'error'\n          );\n          this.mostrarFormularioManual = true;\n          this.cargando = false;\n          return;\n        }\n      }\n\n      await this.ubicacionService.guardarUbicacion(\n        latitud,\n        longitud,\n        this.descripcion\n      );\n\n      this.mostrarMensaje('✓ Ubicación guardada correctamente', 'exito');\n      this.descripcion = '';\n      this.latitud = null;\n      this.longitud = null;\n      this.mostrarFormularioManual = false;\n      this.cargarUbicaciones();\n    } catch (err: any) {\n      console.error('Error:', err);\n      this.mostrarMensaje(\n        `Error al guardar: ${err.message || err}`,\n        'error'\n      );\n    } finally {\n      this.cargando = false;\n    }\n  }\n\n  eliminarUbicacion(id: number) {\n    if (confirm('¿Eliminar esta ubicación?')) {\n      this.ubicacionService.eliminarUbicacion(id)\n        .then(() => {\n          this.mostrarMensaje('Ubicación eliminada', 'exito');\n          this.cargarUbicaciones();\n        })\n        .catch(err => {\n          this.mostrarMensaje('Error al eliminar', 'error');\n          console.error(err);\n        });\n    }\n  }\n\n  mostrarMensaje(texto: string, tipo: 'exito' | 'error' | 'info') {\n    this.mensaje = texto;\n    this.tipoMensaje = tipo;\n    setTimeout(() => {\n      this.mensaje = '';\n    }, 4000);\n  }\n\n  toggleDatosEjemplo() {\n    this.usarDatosEjemplo = !this.usarDatosEjemplo;\n    if (this.usarDatosEjemplo) {\n      this.ubicaciones = this.ubicacionService.obtenerDatosEjemplo();\n      this.dibujarUbicaciones();\n      this.mostrarMensaje('Mostrando datos de ejemplo', 'info');\n    } else {\n      this.cargarUbicaciones();\n    }\n  }\n\n  obtenerMiUbicacion() {\n    this.cargando = true;\n    this.mostrarMensaje('Obteniendo tu ubicación...', 'info');\n    this.ubicacionService.obtenerGPS()\n      .then(gps => {\n        this.latitud = gps.latitud;\n        this.longitud = gps.longitud;\n        this.mostrarMensaje('✓ Ubicación obtenida', 'exito');\n        this.mapa.setView([this.latitud, this.longitud], 15);\n      })\n      .catch(err => {\n        this.mostrarMensaje(\n          `No se pudo obtener GPS: ${err.message || err}`,\n          'error'\n        );\n        this.mostrarFormularioManual = true;\n      })\n      .finally(() => {\n        this.cargando = false;\n      });\n  }\n\n  centrarEnUbicacion(latitud: number, longitud: number) {\n    this.mapa.setView([latitud, longitud], 15);\n  }\n\n  limpiarHistorial() {\n    if (confirm('¿Limpiar el historial de ubicaciones?')) {\n      this.historialUbicaciones = [];\n      this.mostrarMensaje('Historial limpiado', 'info');\n    }\n  }\n\n  exportarHistorial() {\n    const datos = JSON.stringify(this.historialUbicaciones, null, 2);\n    const blob = new Blob([datos], { type: 'application/json' });\n    const url = window.URL.createObjectURL(blob);\n    const a = document.createElement('a');\n    a.href = url;\n    a.download = `historial-gps-${new Date().toISOString()}.json`;\n    a.click();\n    window.URL.revokeObjectURL(url);\n  }\n\n  private getErrorMessage(code: number): string {\n    switch (code) {\n      case 1:\n        return 'Permiso denegado';\n      case 2:\n        return 'Posición no disponible';\n      case 3:\n        return 'Tiempo agotado';\n      default:\n        return 'Error desconocido';\n    }\n  }\n}\n
+  ngOnInit(): void {
+    this.inicializarMapa();
+    this.cargarUbicaciones();
+  }
+
+  ngOnDestroy(): void {
+    if (this.watchId !== null) {
+      navigator.geolocation.clearWatch(this.watchId);
+    }
+  }
+
+  inicializarMapa() {
+    this.mapa = L.map('mapa').setView([19.4326, -99.1332], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(this.mapa);
+  }
+
+  cargarUbicaciones() {
+    this.ubicacionService.obtenerUbicaciones()
+      .then(res => {
+        this.ubicaciones = res.data;
+        if (this.ubicaciones.length === 0 && this.usarDatosEjemplo) {
+          this.ubicaciones = this.ubicacionService.obtenerDatosEjemplo();
+        }
+        this.dibujarUbicaciones();
+      })
+      .catch(err => {
+        console.error('Error al cargar ubicaciones:', err);
+        if (this.usarDatosEjemplo) {
+          this.ubicaciones = this.ubicacionService.obtenerDatosEjemplo();
+          this.dibujarUbicaciones();
+        }
+      });
+  }
+
+  dibujarUbicaciones() {
+    // Limpiar marcadores anteriores (excepto el marcador actual)
+    this.mapa.eachLayer((layer: any) => {
+      if ((layer instanceof L.CircleMarker || layer instanceof L.Marker) && layer !== this.marcadorActual) {
+        this.mapa.removeLayer(layer);
+      }
+    });
+
+    this.ubicaciones.forEach(u => {
+      L.circleMarker([u.latitud, u.longitud], {
+        radius: 8,
+        fillColor: '#3388ff',
+        color: '#000',
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.8
+      }).bindPopup(`
+        <b>${u.descripcion || 'Sin descripción'}</b><br>
+        Lat: ${u.latitud.toFixed(4)}<br>
+        Lon: ${u.longitud.toFixed(4)}<br>
+        ${u.fecha ? 'Fecha: ' + new Date(u.fecha).toLocaleString() : ''}
+      `).addTo(this.mapa);
+    });
+  }
+
+  // Iniciar tracking GPS en tiempo real
+  iniciarGPSEnTiempoReal() {
+    if (!navigator.geolocation) {
+      this.mostrarMensaje('Geolocalización no disponible', 'error');
+      return;
+    }
+
+    if (this.gpsActivo) {
+      this.detenerGPSEnTiempoReal();
+      return;
+    }
+
+    this.gpsActivo = true;
+    this.mostrarMensaje('GPS en tiempo real activado', 'info');
+
+    // Usar watchPosition para actualizaciones continuas
+    this.watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const lat = position.coords.latitude;
+        const lon = position.coords.longitude;
+        this.velocidad = position.coords.speed || 0;
+        this.precision = position.coords.accuracy || 0;
+
+        this.latitud = lat;
+        this.longitud = lon;
+
+        // Actualizar marcador actual
+        if (this.marcadorActual) {
+          this.mapa.removeLayer(this.marcadorActual);
+        }
+
+        this.marcadorActual = L.circleMarker([lat, lon], {
+          radius: 10,
+          fillColor: '#00ff00',
+          color: '#000',
+          weight: 3,
+          opacity: 1,
+          fillOpacity: 0.9
+        }).bindPopup(
+          `<b>Mi ubicación actual</b><br>
+           Lat: ${lat.toFixed(4)}<br>
+           Lon: ${lon.toFixed(4)}<br>
+           Velocidad: ${(this.velocidad ? (this.velocidad * 3.6).toFixed(2) : 0)} km/h<br>
+           Precisión: ${this.precision.toFixed(0)}m`
+        ).addTo(this.mapa);
+
+        // Centrar mapa en ubicación actual
+        this.mapa.setView([lat, lon], 15);
+
+        // Agregar al historial
+        this.historialUbicaciones.push({ lat, lon, fecha: new Date() });
+
+        // Guardar automáticamente cada ubicación
+        this.guardarUbicacionAutomatica(lat, lon);
+      },
+      (error) => {
+        console.error('Error de GPS:', error);
+        this.mostrarMensaje(
+          `Error GPS: ${this.getErrorMessage(error.code)}`,
+          'error'
+        );
+        this.gpsActivo = false;
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 0
+      }
+    );
+  }
+
+  // Detener tracking GPS
+  detenerGPSEnTiempoReal() {
+    if (this.watchId !== null) {
+      navigator.geolocation.clearWatch(this.watchId);
+      this.watchId = null;
+    }
+    this.gpsActivo = false;
+    this.mostrarMensaje('GPS en tiempo real detenido', 'info');
+  }
+
+  // Guardar ubicación automáticamente
+  private guardarUbicacionAutomatica(lat: number, lon: number) {
+    // Crear descripción automática basada en la hora
+    const hora = new Date().toLocaleTimeString();
+    const descripcionAuto = this.descripcion || `Ubicación en tiempo real - ${hora}`;
+
+    this.ubicacionService.guardarUbicacion(lat, lon, descripcionAuto)
+      .then(() => {
+        console.log('Ubicación guardada automáticamente');
+        this.cargarUbicaciones();
+      })
+      .catch(err => {
+        console.error('Error al guardar automáticamente:', err);
+      });
+  }
+
+  async guardarUbicacion() {
+    try {
+      this.cargando = true;
+      this.mensaje = '';
+
+      let latitud: number;
+      let longitud: number;
+
+      if (this.mostrarFormularioManual && this.latitud !== null && this.longitud !== null) {
+        latitud = this.latitud;
+        longitud = this.longitud;
+      } else {
+        this.mostrarMensaje('Obteniendo ubicación GPS...', 'info');
+        try {
+          const gps = await this.ubicacionService.obtenerGPSConReintentos(2);
+          latitud = gps.latitud;
+          longitud = gps.longitud;
+        } catch (error: any) {
+          this.mostrarMensaje(
+            `${error.message || error}. Por favor ingresa las coordenadas manualmente.`,
+            'error'
+          );
+          this.mostrarFormularioManual = true;
+          this.cargando = false;
+          return;
+        }
+      }
+
+      // Guardar en la BD
+      await this.ubicacionService.guardarUbicacion(
+        latitud,
+        longitud,
+        this.descripcion
+      );
+
+      this.mostrarMensaje('✓ Ubicación guardada correctamente', 'exito');
+      this.descripcion = '';
+      this.latitud = null;
+      this.longitud = null;
+      this.mostrarFormularioManual = false;
+      this.cargarUbicaciones();
+    } catch (err: any) {
+      console.error('Error:', err);
+      this.mostrarMensaje(
+        `Error al guardar: ${err.message || err}`,
+        'error'
+      );
+    } finally {
+      this.cargando = false;
+    }
+  }
+
+  eliminarUbicacion(id: number) {
+    if (confirm('¿Eliminar esta ubicación?')) {
+      this.ubicacionService.eliminarUbicacion(id)
+        .then(() => {
+          this.mostrarMensaje('Ubicación eliminada', 'exito');
+          this.cargarUbicaciones();
+        })
+        .catch(err => {
+          this.mostrarMensaje('Error al eliminar', 'error');
+          console.error(err);
+        });
+    }
+  }
+
+  mostrarMensaje(texto: string, tipo: 'exito' | 'error' | 'info') {
+    this.mensaje = texto;
+    this.tipoMensaje = tipo;
+    setTimeout(() => {
+      this.mensaje = '';
+    }, 4000);
+  }
+
+  toggleDatosEjemplo() {
+    this.usarDatosEjemplo = !this.usarDatosEjemplo;
+    if (this.usarDatosEjemplo) {
+      this.ubicaciones = this.ubicacionService.obtenerDatosEjemplo();
+      this.dibujarUbicaciones();
+      this.mostrarMensaje('Mostrando datos de ejemplo', 'info');
+    } else {
+      this.cargarUbicaciones();
+    }
+  }
+
+  obtenerMiUbicacion() {
+    this.cargando = true;
+    this.mostrarMensaje('Obteniendo tu ubicación...', 'info');
+    this.ubicacionService.obtenerGPS()
+      .then(gps => {
+        this.latitud = gps.latitud;
+        this.longitud = gps.longitud;
+        this.mostrarMensaje('✓ Ubicación obtenida', 'exito');
+        this.mapa.setView([this.latitud, this.longitud], 15);
+      })
+      .catch(err => {
+        this.mostrarMensaje(
+          `No se pudo obtener GPS: ${err.message || err}`,
+          'error'
+        );
+        this.mostrarFormularioManual = true;
+      })
+      .finally(() => {
+        this.cargando = false;
+      });
+  }
+
+  centrarEnUbicacion(latitud: number, longitud: number) {
+    this.mapa.setView([latitud, longitud], 15);
+  }
+
+  limpiarHistorial() {
+    if (confirm('¿Limpiar el historial de ubicaciones de esta sesión?')) {
+      this.historialUbicaciones = [];
+      this.mostrarMensaje('Historial limpiado', 'info');
+    }
+  }
+
+  exportarHistorial() {
+    if (this.historialUbicaciones.length === 0) {\n      this.mostrarMensaje('No hay historial para exportar', 'error');
+      return;
+    }
+
+    const datos = JSON.stringify(this.historialUbicaciones, null, 2);
+    const blob = new Blob([datos], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `historial-gps-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    this.mostrarMensaje('Historial exportado', 'exito');
+  }
+
+  private getErrorMessage(code: number): string {
+    switch (code) {
+      case 1:
+        return 'Permiso denegado';
+      case 2:
+        return 'Posición no disponible';
+      case 3:
+        return 'Tiempo agotado';
+      default:
+        return 'Error desconocido';
+    }
+  }
+}
