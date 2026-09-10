@@ -1,0 +1,157 @@
+<div class="contenedor">
+  <div id="mapa" class="mapa"></div>
+  
+  <div class="panel">
+    <h2>📍 Gestor GPS en Tiempo Real</h2>
+    
+    <!-- Mensaje de estado -->
+    <div *ngIf="mensaje" [ngClass]="'alerta alerta-' + tipoMensaje">
+      {{ mensaje }}
+    </div>
+
+    <!-- Estado GPS en Tiempo Real -->
+    <div class="estado-gps">
+      <div class="indicador" [class.activo]="gpsActivo"></div>
+      <span>{{ gpsActivo ? '🟢 GPS ACTIVO' : '🔴 GPS INACTIVO' }}</span>
+    </div>
+
+    <!-- Controles principales -->
+    <div class="controles-principales">
+      <button 
+        (click)="iniciarGPSEnTiempoReal()" 
+        [disabled]="cargando"
+        [class.activo]="gpsActivo"
+        class="boton boton-gps"
+      >
+        {{ gpsActivo ? '⏹️ Detener GPS' : '▶️ Iniciar GPS en Tiempo Real' }}
+      </button>
+      
+      <button 
+        (click)="obtenerMiUbicacion()" 
+        [disabled]="cargando || gpsActivo" 
+        class="boton boton-primario"
+      >
+        📍 Mi Ubicación (Una vez)
+      </button>
+    </div>
+
+    <!-- Información de GPS en Tiempo Real -->
+    <div *ngIf="gpsActivo" class="info-gps">
+      <h3>📊 Datos Actuales</h3>
+      <div class="dato">
+        <span class="etiqueta">Latitud:</span>
+        <span class="valor">{{ latitud?.toFixed(6) || '-' }}</span>
+      </div>
+      <div class="dato">
+        <span class="etiqueta">Longitud:</span>
+        <span class="valor">{{ longitud?.toFixed(6) || '-' }}</span>
+      </div>
+      <div class="dato">
+        <span class="etiqueta">Velocidad:</span>
+        <span class="valor">{{ (velocidad ? (velocidad * 3.6).toFixed(2) : '0.00') }} km/h</span>
+      </div>
+      <div class="dato">
+        <span class="etiqueta">Precisión:</span>
+        <span class="valor">{{ precision.toFixed(0) }}m</span>
+      </div>
+      <div class="dato">
+        <span class="etiqueta">Historial de sesión:</span>
+        <span class="valor">{{ historialUbicaciones.length }} ubicaciones</span>
+      </div>
+    </div>
+
+    <!-- Formulario manual -->
+    <div class="formulario">
+      <h3>💾 Guardar Ubicación Manual</h3>
+      
+      <div class="grupo-coordenadas">
+        <label>
+          <input type="checkbox" [(ngModel)]="mostrarFormularioManual">
+          Ingresar coordenadas manualmente
+        </label>
+      </div>
+
+      <div *ngIf="mostrarFormularioManual" class="coordenadas-manuales">
+        <div>
+          <label>Latitud:</label>
+          <input 
+            type="number" 
+            [(ngModel)]="latitud" 
+            placeholder="Ej: 19.4326"
+            step="0.0001"
+            class="input-small"
+          >
+        </div>
+        <div>
+          <label>Longitud:</label>
+          <input 
+            type="number" 
+            [(ngModel)]="longitud" 
+            placeholder="Ej: -99.1332"
+            step="0.0001"
+            class="input-small"
+          >
+        </div>
+        <small class="hint">💡 Ubica el marcador en el mapa y copia las coordenadas</small>
+      </div>
+
+      <div>
+        <label>Descripción (opcional):</label>
+        <input 
+          type="text" 
+          [(ngModel)]="descripcion" 
+          placeholder="Ej: Mi oficina, Estación, Casa"
+          class="input"
+        >
+      </div>
+
+      <button 
+        (click)="guardarUbicacion()" 
+        [disabled]="cargando"
+        class="boton boton-guardar"
+      >
+        {{ cargando ? '⏳ Guardando...' : '💾 Guardar Ubicación' }}
+      </button>
+    </div>
+
+    <!-- Opciones avanzadas -->
+    <div class="opciones-avanzadas">
+      <button (click)="toggleDatosEjemplo()" class="boton boton-secundario">
+        {{ usarDatosEjemplo ? '❌ Ocultar' : '✓' }} Datos Ejemplo
+      </button>
+      <button 
+        (click)="exportarHistorial()" 
+        [disabled]="historialUbicaciones.length === 0"
+        class="boton boton-secundario"
+      >
+        📥 Exportar Historial
+      </button>
+      <button 
+        (click)="limpiarHistorial()" 
+        [disabled]="historialUbicaciones.length === 0"
+        class="boton boton-peligro"
+      >
+        🗑️ Limpiar Historial
+      </button>
+    </div>
+
+    <!-- Lista de ubicaciones -->
+    <div class="lista-container">
+      <h3>📌 Ubicaciones Guardadas ({{ ubicaciones.length }})</h3>
+      <div *ngIf="ubicaciones.length === 0" class="vacio">
+        <p>No hay ubicaciones guardadas</p>
+      </div>
+      <ul class="lista" *ngIf="ubicaciones.length > 0">
+        <li *ngFor="let u of ubicaciones" class="item">
+          <div class="item-info" (click)="centrarEnUbicacion(u.latitud, u.longitud)" 
+               title="Click para centrar en el mapa">
+            <div class="item-titulo">📍 {{ u.descripcion || 'Sin descripción' }}</div>
+            <div class="item-coords">{{ u.latitud.toFixed(4) }}, {{ u.longitud.toFixed(4) }}</div>
+            <div class="item-fecha">{{ u.fecha ? (u.fecha | date:'short') : '' }}</div>
+          </div>
+          <button (click)="eliminarUbicacion(u.id)" class="btn-eliminar" title="Eliminar">🗑️</button>
+        </li>
+      </ul>
+    </div>
+  </div>
+</div>
